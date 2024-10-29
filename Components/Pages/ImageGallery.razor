@@ -1,0 +1,286 @@
+﻿@page "/gallery"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.EntityFrameworkCore.Infrastructure
+@using SnapViewer.DTOs
+@using SnapViewer.Enums
+@using SnapViewer.Repositories
+@using SnapViewer.Services
+@using System.Text.Json
+@inject ImageService ImageService
+@inject ImageRepository ImageRepository
+@inject IJSRuntime JS
+
+<h3>Tram Gallery</h3>
+
+<Toasts class="p-3" Messages="messages" AutoHide="true" Delay="5000" Placement="ToastsPlacement.TopRight" />
+
+<div class="container">
+    <div class="row">
+        @if (images != null && images.Count > 0)
+        {
+            @foreach (var image in images)
+            {
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3 mb-4">
+                    <div class="card">
+                        <div class="image-wrapper">
+                            <img src="@image.Path" class="card-img-top" alt="Image" @onclick="(() => ShowModal(image.Path))" />
+                        </div>
+                        <div class="card-body">
+                            <button class="btn btn-primary" @onclick="(() => ShowModal(image.Path))">View</button>
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+        else
+        {
+            <p>No images found.</p>
+        }
+    </div>
+</div>
+
+<Modal @ref="modal" Title="Image Preview" IsScrollable="true" Size="ModalSize.Large">
+    <BodyTemplate>
+        <div class="position-relative">            
+            <div class="@(!isLoading ? "" : "opacity-50 pointer-events-none")">
+                <canvas id="annotationCanvas" width="600" height="400"></canvas>
+                <Button Color="ButtonColor.Primary" @onclick="() => SetDrawingTool()" disabled="@isLoading">Select area</Button>
+            </div>
+           
+            @if (isLoading)
+            {
+                <div class="d-flex flex-column justify-content-center align-items-center position-absolute top-50 start-50 translate-middle">
+                    <Spinner Type="SpinnerType.Border" />
+                    <div class="mt-2 text-center">Saving annotations, please wait...</div>
+                </div>
+            }
+        </div>
+    </BodyTemplate>
+    <FooterTemplate>
+        <Button Color="ButtonColor.Secondary" @onclick="HideModal" disabled="@isLoading">Close</Button>
+        <Button Color="ButtonColor.Primary" @onclick="SaveAnnotations" disabled="@isLoading">Save</Button>
+    </FooterTemplate>
+</Modal>
+
+<style>
+    .image-thumbnail {
+        width: 150px; /* Change to your desired size */
+        height: auto; /* Maintain aspect ratio */
+        border-radius: 5px; /* Optional styling */
+        margin: 5px; /* Optional spacing */
+    }
+
+    .image-button {
+        border: none; /* Remove default button styling */
+        background: transparent; /* Make the button background transparent */
+        padding: 0; /* Remove button padding */
+    }
+
+    .modal-backdrop.show {
+        background-color: rgba(0, 0, 0, 0.5); /* Dark overlay for backdrop */
+    }
+
+    .pointer-events-none {
+        pointer-events: none; /* Disable all pointer events */
+    }
+
+    .opacity-50 {
+        opacity: 0.5; /* Dim the content */
+    }
+</style>
+
+@code {
+    private Modal modal;
+    private string selectedImagePath;
+    private int selectedImageId;
+    private List<Models.Image> images;
+    private bool isLoading = false;
+    List<ToastMessage> messages = new List<ToastMessage>();
+
+    private void ShowMessage(ToastType toastType, string message) => messages.Add(CreateToastMessage(toastType, message));
+
+    private ToastMessage CreateToastMessage(ToastType toastType, string message)
+     => new ToastMessage
+     {
+         Type = toastType,
+         Title = "SnapViewer",
+         HelpText = $"{DateTime.Now}",
+         Message = message
+     };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var imagePathsFromRoot = ImageService.GetImagePaths().ToList();
+
+        if (imagePathsFromRoot.Count == 0)
+        {
+            Console.WriteLine("No image paths found.");
+            return;
+        }
+
+        await ImageRepository.InitializeImagesAsync(imagePathsFromRoot);
+        images = await ImageRepository.GetAllImagesAsync();
+
+        if (images == null || images.Count == 0)
+        {
+            Console.WriteLine("No images found in the database.");
+        }
+    }
+
+    private async Task ShowModal(string imagePath)
+    {
+        Console.WriteLine($"Showing modal for image path: {imagePath}");
+
+        selectedImagePath = imagePath;
+        
+        var selectedImage = images.FirstOrDefault(img => img.Path == selectedImagePath);
+        if (selectedImage != null)
+        {
+            selectedImageId = selectedImage.Id;
+            Console.WriteLine($"Selected ImageId: {selectedImageId}");
+            
+            var annotations = await ImageRepository.GetAnnotationsByImageIdAsync(selectedImageId);
+            
+            if (annotations == null || !annotations.Any())
+            {
+                Console.WriteLine("No annotations found for the selected image ID.");
+            }
+            else
+            {
+                Console.WriteLine($"Retrieved {annotations.Count} annotations.");
+            }
+
+            var json = JsonSerializer.Serialize(annotations.Select(a => new AnnotationData
+                {
+                    Id = a.Id,
+                    ImageId = a.ImageId,
+                    X = a.X,
+                    Y = a.Y,
+                    Width = a.Width,
+                    Height = a.Height
+                }), new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                });
+
+            Console.WriteLine("Serialized annotations JSON: " + json);
+
+            await modal?.ShowAsync();
+            
+            await JS.InvokeVoidAsync("initializeCanvas", selectedImagePath, json, selectedImageId);
+        }
+        else
+        {
+            Console.WriteLine("Selected image not found in the database.");
+        }
+    }
+
+    private async Task HideModal()
+    {
+        await modal?.HideAsync();
+    }
+
+    private async Task SaveAnnotations()
+    {
+        isLoading = true;
+        StateHasChanged();
+        
+        var jsonAnnotations = await JS.InvokeAsync<string>("getAnnotations");
+
+        if (string.IsNullOrWhiteSpace(jsonAnnotations))
+        {
+            Console.WriteLine("No annotations received from JavaScript.");
+            ShowMessage(ToastType.Danger, "No annotations received from JavaScript.");
+            isLoading = false;
+            StateHasChanged();
+            return;
+        }
+
+        List<AnnotationData> annotationsData;
+        try
+        {
+            annotationsData = JsonSerializer.Deserialize<List<AnnotationData>>(jsonAnnotations);
+        }
+        catch (JsonException ex)
+        {
+            Console.WriteLine($"Deserialization error: {ex.Message}");
+            ShowMessage(ToastType.Danger, "Deserialization error");
+            isLoading = false;
+            StateHasChanged();
+            return;
+        }
+        
+        foreach (var annotation in annotationsData)
+        {
+            annotation.ImageId = selectedImageId;
+        }
+        
+        var existingAnnotations = await ImageRepository.GetAnnotationsByImageIdAsync(selectedImageId);
+        var existingAnnotationIds = new HashSet<int>(existingAnnotations.Select(a => a.Id));
+        
+        var newAnnotationIds = new HashSet<int>(annotationsData.Select(a => a.Id));
+        var annotationIdsToDelete = existingAnnotationIds
+            .Where(id => !newAnnotationIds.Contains(id) && id != 0)
+            .ToList();
+        
+        foreach (var id in annotationIdsToDelete)
+        {
+            await ImageRepository.DeleteAnnotationAsync(id);
+            Console.WriteLine($"Deleted annotation with Id: {id}");
+        }
+       
+        foreach (var annotationData in annotationsData)
+        {
+            var annotation = new Models.Annotation
+                {
+                    Id = annotationData.Id,
+                    ImageId = annotationData.ImageId,
+                    X = annotationData.X,
+                    Y = annotationData.Y,
+                    Width = annotationData.Width,
+                    Height = annotationData.Height
+                };
+            
+            if (annotation.ImageId == 0)
+            {
+                Console.WriteLine($"ImageId is not set for annotation with Id: {annotationData.Id}. Skipping.");
+                continue;
+            }
+
+            if (annotationData.Id == 0)
+            {
+                try
+                {
+                    await ImageRepository.AddAnnotationAsync(annotation);
+                    Console.WriteLine("Added new annotation.");
+                }
+                catch (DbUpdateException ex)
+                {
+                    var innerException = ex.InnerException;
+                    Console.WriteLine(innerException?.Message);
+                    Console.WriteLine($"Error while processing annotation: {JsonSerializer.Serialize(annotation)}");
+                    throw;
+                }
+            }
+            else if (existingAnnotationIds.Contains(annotationData.Id))
+            {
+                await ImageRepository.UpdateAnnotationAsync(annotation);
+                Console.WriteLine($"Updated annotation with Id: {annotationData.Id}");
+            }
+            else
+            {
+                Console.WriteLine($"Warning: Attempting to update non-existing annotation with Id: {annotationData.Id}");
+            }
+        }
+        ShowMessage(ToastType.Success, "Annotations saved successfully");
+
+        isLoading = false;
+        await HideModal();
+        StateHasChanged();
+    }
+
+    private async Task SetDrawingTool()
+    {
+        await JS.InvokeVoidAsync("setDrawingTool");
+    }    
+}
