@@ -24,8 +24,7 @@ window.initializeCanvas = function (imagePath, annotationsJson, imageId) {
         console.log(`Image loaded successfully: ${imagePath}`);
 
         const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
-
-        // Set canvas background image with dynamic scaling and centering
+        
         canvas.setBackgroundImage(img.src, canvas.renderAll.bind(canvas), {
             originX: 'center',
             originY: 'center',
@@ -61,7 +60,7 @@ function setupMouseEvents(imgId) {
         if (currentTool === "rectangle") {
             const target = canvas.findTarget(options.e);
             if (target && target.type === "rect") {
-                return; // Prevent drawing if clicking on an existing rectangle
+                return;
             }
 
             startX = options.pointer.x;
@@ -89,8 +88,7 @@ function setupMouseEvents(imgId) {
         const pointer = canvas.getPointer(options.e);
         const width = pointer.x - startX;
         const height = pointer.y - startY;
-
-        // Update rectangle dimensions
+       
         rect.set({
             width: Math.abs(width),
             height: Math.abs(height),
@@ -101,13 +99,13 @@ function setupMouseEvents(imgId) {
     });
 
     canvas.on('mouse:up', function () {
-        isDrawing = false; // Disable drawing mode
+        isDrawing = false;
         if (rect) {
-            rect.setCoords(); // Set coordinates for the rectangle
-            canvas.setActiveObject(rect); // Make the rectangle active
-            canvas.hoverCursor = 'default'; // Reset hover cursor to default
-            canvas.defaultCursor = 'default'; // Reset default cursor to default
-            currentTool = null; // Deselect the tool after drawing
+            rect.setCoords();
+            canvas.setActiveObject(rect);
+            canvas.hoverCursor = 'default';
+            canvas.defaultCursor = 'default';
+            currentTool = null;
         }
     });
 
@@ -125,13 +123,11 @@ function setupMouseEvents(imgId) {
     });
 }
 
-window.setDrawingTool = function () {
-    //if (isDrawingToolActive) return; // Prevent multiple activations
-
-    currentTool = "rectangle"; // Set current tool to rectangle
-    canvas.hoverCursor = 'crosshair'; // Change cursor to crosshair
-    canvas.defaultCursor = 'crosshair'; // Set default cursor to crosshair
-    isDrawingToolActive = true; // Mark the tool as active
+window.setDrawingTool = function () { 
+    currentTool = "rectangle";
+    canvas.hoverCursor = 'crosshair';
+    canvas.defaultCursor = 'crosshair';
+    isDrawingToolActive = true;
 };
 
 function setupDeleteEvent() {
