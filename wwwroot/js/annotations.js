@@ -1,5 +1,6 @@
 ﻿let canvas;
 let isDrawing = false;
+let isDrawingToolActive = false;
 let currentTool = null;
 let startX, startY;
 let rect;
@@ -10,10 +11,10 @@ window.initializeCanvas = function (imagePath, annotationsJson, imageId) {
     if (!imagePath) {
         console.error("No image path provided for canvas initialization.");
         return;
-    }    
+    }
 
     const canvasElement = document.getElementById("annotationCanvas");
-    canvas = new fabric.Canvas(canvasElement);    
+    canvas = new fabric.Canvas(canvasElement);
 
     const img = new Image();
     img.src = '';
@@ -21,7 +22,7 @@ window.initializeCanvas = function (imagePath, annotationsJson, imageId) {
 
     img.onload = function () {
         console.log(`Image loaded successfully: ${imagePath}`);
-        
+
         const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
 
         // Set canvas background image with dynamic scaling and centering
@@ -33,15 +34,15 @@ window.initializeCanvas = function (imagePath, annotationsJson, imageId) {
             scaleX: scale,
             scaleY: scale
         });
-       
+
         if (annotationsJson) {
             drawAnnotations(annotationsJson, imageId);
         } else {
             console.warn("No annotations to draw.");
         }
-        
+
         isDrawing = false;
-       
+
         setupMouseEvents(imageId);
         setupDeleteEvent();
     };
@@ -57,10 +58,10 @@ window.setSelectedImagePath = function (imagePath) {
 
 function setupMouseEvents(imgId) {
     canvas.on('mouse:down', function (options) {
-        if (currentTool === "rectangle") {            
+        if (currentTool === "rectangle") {
             const target = canvas.findTarget(options.e);
             if (target && target.type === "rect") {
-                return;
+                return; // Prevent drawing if clicking on an existing rectangle
             }
 
             startX = options.pointer.x;
@@ -72,45 +73,47 @@ function setupMouseEvents(imgId) {
                 left: startX,
                 top: startY,
                 fill: 'transparent',
-                stroke: 'red',       
-                strokeWidth: 2,                         
-                selectable: true,  
+                stroke: 'red',
+                strokeWidth: 2,
+                selectable: true,
                 hasControls: true
             });
-            
+
             canvas.add(rect);
         }
     });
 
     canvas.on('mouse:move', function (options) {
-        if (!isDrawing) return;
+        if (!isDrawing || !rect) return;
 
         const pointer = canvas.getPointer(options.e);
         const width = pointer.x - startX;
         const height = pointer.y - startY;
-        
-        if (rect) {
-            rect.set({
-                width: Math.abs(width),
-                height: Math.abs(height),
-                left: width < 0 ? pointer.x : startX,
-                top: height < 0 ? pointer.y : startY,
-            });
-            canvas.renderAll();
-        }
+
+        // Update rectangle dimensions
+        rect.set({
+            width: Math.abs(width),
+            height: Math.abs(height),
+            left: width < 0 ? pointer.x : startX,
+            top: height < 0 ? pointer.y : startY,
+        });
+        canvas.renderAll();
     });
 
     canvas.on('mouse:up', function () {
-        isDrawing = false;
+        isDrawing = false; // Disable drawing mode
         if (rect) {
-            rect.setCoords();
-            canvas.setActiveObject(rect);
+            rect.setCoords(); // Set coordinates for the rectangle
+            canvas.setActiveObject(rect); // Make the rectangle active
+            canvas.hoverCursor = 'default'; // Reset hover cursor to default
+            canvas.defaultCursor = 'default'; // Reset default cursor to default
+            currentTool = null; // Deselect the tool after drawing
         }
     });
-    
+
     canvas.on('object:moving', function (e) {
         const target = e.target;
-        if (target && target.type === "rect") {            
+        if (target && target.type === "rect") {
             const objects = canvas.getObjects();
             objects.forEach(obj => {
                 if (obj !== target && obj.intersectsWithObject(target)) {
@@ -123,15 +126,12 @@ function setupMouseEvents(imgId) {
 }
 
 window.setDrawingTool = function () {
-    if (currentTool === "rectangle") {
-        currentTool = null;
-        canvas.isDrawingMode = false;
-        canvas.hoverCursor = 'default';
-    } else {
-        currentTool = "rectangle";
-        canvas.isDrawingMode = false;
-        canvas.hoverCursor = 'crosshair';
-    }
+    //if (isDrawingToolActive) return; // Prevent multiple activations
+
+    currentTool = "rectangle"; // Set current tool to rectangle
+    canvas.hoverCursor = 'crosshair'; // Change cursor to crosshair
+    canvas.defaultCursor = 'crosshair'; // Set default cursor to crosshair
+    isDrawingToolActive = true; // Mark the tool as active
 };
 
 function setupDeleteEvent() {
@@ -143,7 +143,7 @@ function setupDeleteEvent() {
             }
         }
     });
-   
+
     canvas.on('selection:created', function (e) {
         const selectedObject = e.target;
         if (selectedObject && selectedObject.type === 'rect') {
@@ -151,7 +151,7 @@ function setupDeleteEvent() {
             canvas.renderAll();
         }
     });
-    
+
     canvas.on('selection:cleared', function () {
         const objects = canvas.getObjects();
         objects.forEach((obj) => {
@@ -161,7 +161,7 @@ function setupDeleteEvent() {
         });
         canvas.renderAll();
     });
-    
+
     canvas.on('object:selected', function (e) {
         const selectedObject = e.target;
         if (selectedObject && selectedObject.type === 'rect') {
@@ -169,7 +169,7 @@ function setupDeleteEvent() {
             canvas.renderAll();
         }
     });
-    
+
     canvas.on('object:removed', function (e) {
         const objects = canvas.getObjects();
         objects.forEach((obj) => {
@@ -181,21 +181,20 @@ function setupDeleteEvent() {
     });
 }
 
-window.drawAnnotations = function (annotationsJson, imageId) {    
+window.drawAnnotations = function (annotationsJson, imageId) {
     if (!canvas) {
         console.error("Canvas is not initialized.");
         return;
     }
 
-    try {        
+    try {
         const annotations = JSON.parse(annotationsJson);
         console.log('Parsed annotations:', annotations);
         console.log('Image Id:', imageId);
-        
-        annotations.forEach((annotation) => {            
+
+        annotations.forEach((annotation) => {
             if (annotation.x !== undefined && annotation.y !== undefined &&
                 annotation.width !== undefined && annotation.height !== undefined) {
-               
                 const rect = new fabric.Rect({
                     id: annotation.id,
                     imageId: imageId,
@@ -207,13 +206,13 @@ window.drawAnnotations = function (annotationsJson, imageId) {
                     stroke: 'red',
                     strokeWidth: 2
                 });
-                
+
                 canvas.add(rect);
             } else {
                 console.warn('Missing properties in annotation:', annotation);
             }
         });
-        
+
         canvas.renderAll();
     } catch (error) {
         console.error('Error parsing annotations or drawing on canvas:', error);
@@ -230,9 +229,6 @@ function getAnnotations() {
         Height: a.height
     }));
     console.log("Annotations to save:", annotations);
-    annotations.forEach(annotation => {
-        console.log(`Id: ${annotation.Id}, ImageId: ${annotation.ImageId}`);
-    });
     return JSON.stringify(annotations);
 }
 
