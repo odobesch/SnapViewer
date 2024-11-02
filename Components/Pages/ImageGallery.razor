@@ -9,6 +9,7 @@
 @inject ImageService ImageService
 @inject ImageRepository ImageRepository
 @inject IJSRuntime JS
+@inject ILogger<ImageService> Logger
 
 <h3>Tram Gallery</h3>
 
@@ -115,6 +116,7 @@
         if (imagePathsFromRoot.Count == 0)
         {
             Console.WriteLine("No image paths found.");
+            Logger.LogWarning("No image paths found.");
             return;
         }
 
@@ -124,6 +126,7 @@
         if (images == null || images.Count == 0)
         {
             Console.WriteLine("No images found in the database.");
+            Logger.LogWarning("No images found in the database.");
         }
     }
 
@@ -132,15 +135,15 @@
         Console.WriteLine($"Showing modal for image path: {imagePath}");
 
         selectedImagePath = imagePath;
-        
+
         var selectedImage = images.FirstOrDefault(img => img.Path == selectedImagePath);
         if (selectedImage != null)
         {
             selectedImageId = selectedImage.Id;
             Console.WriteLine($"Selected ImageId: {selectedImageId}");
-            
+
             var annotations = await ImageRepository.GetAnnotationsByImageIdAsync(selectedImageId);
-            
+
             if (annotations == null || !annotations.Any())
             {
                 Console.WriteLine("No annotations found for the selected image ID.");
@@ -166,7 +169,7 @@
             Console.WriteLine("Serialized annotations JSON: " + json);
 
             await modal?.ShowAsync();
-            
+
             await JS.InvokeVoidAsync("initializeCanvas", selectedImagePath, json, selectedImageId);
         }
         else
@@ -184,12 +187,12 @@
     {
         isLoading = true;
         StateHasChanged();
-        
+
         var jsonAnnotations = await JS.InvokeAsync<string>("getAnnotations");
 
         if (string.IsNullOrWhiteSpace(jsonAnnotations))
         {
-            Console.WriteLine("No annotations received from JavaScript.");
+            Logger.LogWarning("No annotations received from JavaScript.");
             ShowMessage(ToastType.Danger, "No annotations received from JavaScript.");
             isLoading = false;
             StateHasChanged();
@@ -203,32 +206,62 @@
         }
         catch (JsonException ex)
         {
-            Console.WriteLine($"Deserialization error: {ex.Message}");
+            Logger.LogError(ex, "Deserialization error.");
             ShowMessage(ToastType.Danger, "Deserialization error");
             isLoading = false;
             StateHasChanged();
             return;
         }
-        
+
         foreach (var annotation in annotationsData)
         {
             annotation.ImageId = selectedImageId;
         }
-        
+       
+        await using var transaction = await ImageRepository.BeginTransactionAsync();
+        try
+        {
+            await ProcessAnnotations(annotationsData);
+
+            await transaction.CommitAsync();
+            Logger.LogInformation("Annotations saved successfully.");
+            ShowMessage(ToastType.Success, "Annotations saved successfully");
+        }
+        catch (Exception ex)
+        {
+            await transaction.RollbackAsync();
+            Logger.LogError(ex, "Error saving annotations. Changes rolled back.");
+            ShowMessage(ToastType.Danger, "Failed to save annotations.");
+        }
+        finally
+        {
+            isLoading = false;
+            await HideModal();
+            StateHasChanged();
+        }
+    }
+
+    private async Task SetDrawingTool()
+    {
+        await JS.InvokeVoidAsync("setDrawingTool");
+    }    
+
+    private async Task ProcessAnnotations(List<AnnotationData> annotationsData)
+    {
         var existingAnnotations = await ImageRepository.GetAnnotationsByImageIdAsync(selectedImageId);
         var existingAnnotationIds = new HashSet<int>(existingAnnotations.Select(a => a.Id));
-        
+
         var newAnnotationIds = new HashSet<int>(annotationsData.Select(a => a.Id));
         var annotationIdsToDelete = existingAnnotationIds
             .Where(id => !newAnnotationIds.Contains(id) && id != 0)
             .ToList();
-        
+
         foreach (var id in annotationIdsToDelete)
         {
             await ImageRepository.DeleteAnnotationAsync(id);
-            Console.WriteLine($"Deleted annotation with Id: {id}");
+            Logger.LogInformation($"Deleted annotation with Id: {id}");
         }
-       
+
         foreach (var annotationData in annotationsData)
         {
             var annotation = new Models.Annotation
@@ -240,47 +273,27 @@
                     Width = annotationData.Width,
                     Height = annotationData.Height
                 };
-            
+
             if (annotation.ImageId == 0)
             {
-                Console.WriteLine($"ImageId is not set for annotation with Id: {annotationData.Id}. Skipping.");
+                Logger.LogWarning($"ImageId is not set for annotation with Id: {annotationData.Id}. Skipping.");
                 continue;
             }
 
             if (annotationData.Id == 0)
             {
-                try
-                {
-                    await ImageRepository.AddAnnotationAsync(annotation);
-                    Console.WriteLine("Added new annotation.");
-                }
-                catch (DbUpdateException ex)
-                {
-                    var innerException = ex.InnerException;
-                    Console.WriteLine(innerException?.Message);
-                    Console.WriteLine($"Error while processing annotation: {JsonSerializer.Serialize(annotation)}");
-                    throw;
-                }
+                await ImageRepository.AddAnnotationAsync(annotation);
+                Logger.LogInformation("Added new annotation.");
             }
             else if (existingAnnotationIds.Contains(annotationData.Id))
             {
                 await ImageRepository.UpdateAnnotationAsync(annotation);
-                Console.WriteLine($"Updated annotation with Id: {annotationData.Id}");
+                Logger.LogInformation($"Updated annotation with Id: {annotationData.Id}");
             }
             else
             {
-                Console.WriteLine($"Warning: Attempting to update non-existing annotation with Id: {annotationData.Id}");
+                Logger.LogWarning($"Attempting to update non-existing annotation with Id: {annotationData.Id}");
             }
         }
-        ShowMessage(ToastType.Success, "Annotations saved successfully");
-
-        isLoading = false;
-        await HideModal();
-        StateHasChanged();
     }
-
-    private async Task SetDrawingTool()
-    {
-        await JS.InvokeVoidAsync("setDrawingTool");
-    }    
 }

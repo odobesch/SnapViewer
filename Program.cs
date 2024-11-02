@@ -1,10 +1,19 @@
 using Microsoft.EntityFrameworkCore;
+using Serilog;
 using SnapViewer.Components;
 using SnapViewer.Data;
 using SnapViewer.Repositories;
 using SnapViewer.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration) 
+    .WriteTo.Console()                            
+    .WriteTo.File("logs/log.txt", rollingInterval: RollingInterval.Day, retainedFileCountLimit: 5)                                                                         
+    .CreateLogger();
+
+builder.Host.UseSerilog();
 
 builder.Services.AddBlazorBootstrap();
 
@@ -19,6 +28,8 @@ builder.Services.AddScoped<ImageRepository>();
 builder.Services.AddTransient<ImageService>();
 
 var app = builder.Build();
+
+app.UseSerilogRequestLogging();
 
 if (!app.Environment.IsDevelopment())
 {

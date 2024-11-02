@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using SnapViewer.Data;
 using SnapViewer.Models;
 
@@ -12,7 +13,12 @@ namespace SnapViewer.Repositories
         {
             _context = context;
         }
-       
+
+        public async Task<IDbContextTransaction> BeginTransactionAsync()
+        {
+            return await _context.Database.BeginTransactionAsync();
+        }
+
         public async Task<List<Image>> GetAllImagesAsync()
         {
             return await _context.Images.ToListAsync();
